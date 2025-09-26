@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
@@ -9,6 +10,10 @@ from fastapi.responses import PlainTextResponse, FileResponse
 from pydantic_settings import BaseSettings
 from twilio.twiml.voice_response import VoiceResponse, Gather, Play, Say
 import httpx
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 MEDIA_DIR = Path(__file__).parent.parent / "media"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,14 +44,34 @@ async def voice_incoming(request: Request, secret: str = Query(default="")):
     if secret != settings.twilio_voice_webhook_secret:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # First prompt to start the conversation
+    # Generate first prompt with Australian accent
+    first_prompt = "How's it going im natasha, I need to collect some medical info from you, are you available to answer some questions???"
+    audio_path = await synthesize_tts(first_prompt)
+    
     vr = VoiceResponse()
-    gather = Gather(input="speech", action=f"{settings.base_url}/voice/handle_gather?secret={secret}", method="POST", timeout=6)
-    gather.say("Hello. I have no idea what I am doing, would be crazy to hear this haha. Please say something.")
+    
+    # Play the Australian-accented greeting
+    if audio_path:
+        media_url = f"{settings.base_url}/media/{audio_path.name}"
+        vr.play(media_url)
+    else:
+        vr.say(first_prompt)  # Fallback to Twilio TTS
+    
+    # Then gather speech input
+    gather = Gather(
+        input="speech", 
+        action=f"{settings.base_url}/voice/handle_gather?secret={secret}", 
+        method="POST", 
+        timeout=10,
+        speech_timeout="auto",
+        enhanced=True
+    )
     vr.append(gather)
-    # If no input is captured
-    vr.say("I did not catch that. Goodbye.")
+    
+    # Fallback if no response
+    vr.say("I'm having trouble hearing you. Goodbye.")
     return PlainTextResponse(str(vr))
+
 
 
 @app.post("/voice/handle_gather", response_class=PlainTextResponse)
@@ -56,6 +81,11 @@ async def voice_handle_gather(request: Request, secret: str = Query(default=""))
 
     form = await request.form()
     user_utterance = form.get("SpeechResult") or form.get("TranscriptionText") or ""
+    
+    # Debug logging
+    logger.info(f"Received speech input: '{user_utterance}'")
+    logger.info(f"Form data: {dict(form)}")
+    
     # Basic state via Twilio cookies is possible; we keep it stateless and short.
 
     # Get LLM response
@@ -63,7 +93,7 @@ async def voice_handle_gather(request: Request, secret: str = Query(default=""))
 
     # TTS via ElevenLabs
     audio_path = await synthesize_tts(reply_text)
-
+    logger.info("Made it here")
     # Build TwiML to play audio and prompt next turn
     vr = VoiceResponse()
     if audio_path:
@@ -73,10 +103,19 @@ async def voice_handle_gather(request: Request, secret: str = Query(default=""))
         vr.say(reply_text or "Thanks for calling.")
 
     # Loop for a few turns
-    gather = Gather(input="speech", action=f"{settings.base_url}/voice/handle_gather?secret={secret}", method="POST", timeout=6)
+    gather = Gather(
+        input="speech", 
+        action=f"{settings.base_url}/voice/handle_gather?secret={secret}", 
+        method="POST", 
+        timeout=10,
+        speech_timeout="auto",
+        enhanced=True
+    )
     gather.say("You can speak again, or say goodbye to end the call.")
     vr.append(gather)
-
+    
+    # Fallback if no response
+    vr.say("Thank you for calling. Goodbye.")
     return PlainTextResponse(str(vr))
 
 
@@ -122,7 +161,7 @@ async def synthesize_tts(text: str) -> Optional[Path]:
     if not api_key:
         return None
 
-    voice_id = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs default "Rachel"
+    voice_id = "DLsHlh26Ugcm6ELvS0qi"  # ElevenLabs "Charlie" - Australian accent
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
     filename = f"tts_{uuid.uuid4().hex}.mp3"
