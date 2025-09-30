@@ -18,7 +18,7 @@ load_dotenv()
 conversation_state = {}
 
 QUESTIONS = [
-    {"key": "name", "prompt": "Hi Mr Beazely, this is yosefina. I love Thailand and wanna learn how to love you. Whats your first name"},
+    {"key": "name", "prompt": "Hi Mr Beazely, this is yosefina.  Whats your first name"},
     {"key": "date_of_birth", "prompt": "Thank you {name}! What's your date of birth?"},
     {"key": "phone", "prompt": "Great! What's your phone number?"},
     {"key": "email", "prompt": "And what's your email address?"},
